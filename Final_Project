@@ -1,0 +1,170 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import geopandas as gpd
+
+SA_service_areas_shp = gpd.read_file("SAPD_Service_Areas.shp")
+SA_crimes = pd.read_csv("pubsafedash_offenses.csv")
+SA_subs_df = pd.read_csv("SA_substations.csv")
+
+SA_crimes.head()
+
+SA_crimes = pd.read_csv("pubsafedash_offenses.csv", low_memory=False)
+
+SA_service_areas_shp.head()
+
+SA_service_areas_shp.plot()
+
+SA_subs_df.head()
+
+SA_crimes['Report_Date'] = pd.to_datetime(SA_crimes['Report_Date'])
+
+#Add the new 'Day_of_Week' column based on 'Report_Date'
+SA_crimes['Day_of_Week'] = SA_crimes['Report_Date'].dt.day_name()
+
+#Save the DataFrame back to a CSV to make the changes permanent
+SA_crimes.to_csv("pubsafedash_offenses_updated.csv", index=False)
+
+#Check the updated DataFrame
+print(SA_crimes.head())
+
+SA_crimes['Report_Date'] = pd.to_datetime(SA_crimes['Report_Date'])
+
+#Add a new 'Month' column by extracting the month from 'Report_Date'
+SA_crimes['Month'] = SA_crimes['Report_Date'].dt.month
+
+#Convert numeric month to month name (January, February, etc.)
+SA_crimes['Month_Name'] = SA_crimes['Report_Date'].dt.month_name()
+
+#Save the DataFrame with the new 'Month' column back to a CSV
+SA_crimes.to_csv("pubsafedash_offenses_updated.csv", index=False)
+
+#Check the updated DataFrame
+print(SA_crimes.head())
+
+SA_crimes.head()
+
+SA_crimes.groupby("NIBRS_Code_Name").count()[["Report_ID"]]
+
+SA_crimes.groupby("NIBRS_Crime_Against").count()[["Report_ID"]]
+
+SA_crimes_zip_counts = SA_crimes.groupby("Zip_Code",
+                                                     as_index=False).count()[["Zip_Code","Report_ID"]]
+SA_crimes_zip_counts.head()
+
+SA_crimes_service_area_counts = SA_crimes.groupby("Service_Area",
+                                                     as_index=False).count()[["Service_Area","Report_ID"]]
+SA_crimes_service_area_counts.head()
+
+SA_crimes_week_day_counts = SA_crimes.groupby("Day_of_Week",
+                                                     as_index=False).count()[["Day_of_Week","Report_ID"]]
+print(SA_crimes_week_day_counts)
+
+month_mapping = {
+    "January": 1, "February": 2, "March": 3, "April": 4, "May": 5, "June": 6,
+    "July": 7, "August": 8, "September": 9, "October": 10, "November": 11, "December": 12
+}
+
+#Group by 'Month_Name' and count the 'Report_ID'
+SA_crimes_week_day_counts = SA_crimes.groupby("Month_Name", as_index=False).count()[["Month_Name", "Report_ID"]]
+
+#Add a new column to map the month names to month numbers
+SA_crimes_week_day_counts["Month_Num"] = SA_crimes_week_day_counts["Month_Name"].map(month_mapping)
+
+#Sort the DataFrame by the numerical month
+SA_crimes_week_day_counts = SA_crimes_week_day_counts.sort_values("Month_Num")
+
+#Display the sorted DataFrame
+print(SA_crimes_week_day_counts)
+
+merged_SA_crimes = pd.merge(SA_service_areas_shp,SA_crimes_service_area_counts,
+                             left_on='SUBSTN', right_on='Service_Area')
+
+merged_SA_crimes.plot(column="Report_ID",figsize=(10,10))
+
+SA_sub_points = gpd.GeoDataFrame(SA_subs_df, geometry=gpd.points_from_xy(SA_subs_df.LON,
+                                                                         SA_subs_df.LAT))
+
+fig, ax = plt.subplots(figsize=(10, 10))
+
+# Using Report_ID to color the polygons/points
+merged_SA_crimes.plot(column='Report_ID', ax=ax, legend=True, cmap='RdYlBu', linewidth=0.8, edgecolor='black')
+
+ax.set_title('2024 Crime Incidents Distribution Across SAPD Service Areas')
+
+for x, y, label in zip(SA_sub_points.geometry.x, SA_sub_points.geometry.y, SA_sub_points.Name):
+        ax.annotate(label, xy=(x, y), xytext=(3, 3), textcoords="offset points",fontsize=12)
+ax.axis('off')
+
+plt.show()
+
+SA_subs_df.head()
+
+merged_SA_crimes.to_file("output_SA_crime_counts.shp")
+
+SA_crime_count = gpd.read_file("output_SA_crime_counts.shp")
+
+def gpd_bokeh(df):
+    """Convert geometries from geopandas to bokeh format"""
+    nan = float('nan')
+    lons = []
+    lats = []
+    for i,shape in enumerate(df.geometry.values):
+        if shape.geom_type == 'MultiPolygon':
+            gx = []
+            gy = []
+            ng = len(shape.geoms) - 1
+            for j,member in enumerate(shape.geoms):
+                xy = np.array(list(member.exterior.coords))
+                xs = xy[:,0].tolist()
+                ys = xy[:,1].tolist()
+                gx.extend(xs)
+                gy.extend(ys)
+                if j < ng:
+                    gx.append(nan)
+                    gy.append(nan)
+            lons.append(gx)
+            lats.append(gy)
+
+        else:
+            xy = np.array(list(shape.exterior.coords))
+            xs = xy[:,0].tolist()
+            ys = xy[:,1].tolist()
+            lons.append(xs)
+            lats.append(ys)
+
+    return lons,lats
+
+SA_crime_count.head()
+
+from bokeh.io import output_file, show,output_notebook
+from bokeh.models import ColumnDataSource,ColorBar,HoverTool
+from bokeh.transform import linear_cmap
+from bokeh.plotting import figure
+from bokeh.palettes import Spectral6
+
+lons, lats = gpd_bokeh(SA_crime_count)
+source = ColumnDataSource(data=dict(
+    x = lons,
+    y = lats,
+    Service_Area = SA_crime_count['SUBSTN'],
+    Incident_Count = SA_crime_count['Report_ID']))
+
+color_mapper = linear_cmap(field_name='Incident_Count', palette=Spectral6 ,
+                           low=min(SA_crime_count['Report_ID']) ,
+                           high=max(SA_crime_count['Report_ID']))
+TOOLS = "pan,wheel_zoom,reset,hover,save"
+
+map = figure(frame_width=800, frame_height=600,title="January-November 2024 San Antonio Crime Map", tools=TOOLS,)
+map.patches('x', 'y', source=source, line_color="white", line_width=0.1, color=color_mapper)
+
+map.select_one(HoverTool).tooltips = [
+    ('Incident_Count', '@Incident_Count'),
+    ('Service_Area', '@Service_Area')
+]
+
+color_bar = ColorBar(color_mapper=color_mapper['transform'], width=16, location=(0,0))
+map.add_layout(color_bar, 'right')
+
+output_file("SA_crime_count.html")
+show(map)
